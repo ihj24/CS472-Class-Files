@@ -263,11 +263,11 @@ typedef struct
 // upper 16 bits are seconds, and the lower 16 bits are fractions
 // of a second, here are helpers to decode Q16.16 encoded numbers
 #define GET_NTP_Q1616_SEC(d) (d >> 16)
-#define GET_NTP_Q1616_FRAC(d) (d & 0xFFFF0000)
-// Returns a double number in seconds
-#define GET_NTP_Q1616_TS(d) (                \
-    (double)((GET_NTP_Q1616_SEC(d) * 1000) + \
-             (GET_NTP_Q1616_FRAC(d) / 65535.0)))
+#define GET_NTP_Q1616_FRAC(d) ((d) & 0xFFFF)
+
+#define GET_NTP_Q1616_TS(d) (        \
+    (double)(GET_NTP_Q1616_SEC(d)) + \
+    ((double)GET_NTP_Q1616_FRAC(d) / 65536.0))
 
 // Improved utility macros for time conversion
 #define NTP_TO_UNIX_SECONDS(ntp_sec) ((ntp_sec) - NTP_EPOCH_OFFSET)
