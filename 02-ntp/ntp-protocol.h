@@ -1,4 +1,4 @@
-/* HIIIIII
+/*
  * NTP Protocol Header - Network Programming Assignment
  *
  * This header file defines the complete NTP (Network Time Protocol)
