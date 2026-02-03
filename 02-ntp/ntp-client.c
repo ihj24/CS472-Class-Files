@@ -409,7 +409,40 @@ void ntp_time_to_string(const ntp_timestamp_t *ntp_ts, char *buffer, size_t buff
     printf("ntp_time_to_string() - TO BE IMPLEMENTED\n");
     // TODO: Implement this function
     // Hint: Convert NTP to Unix time, use localtime/gmtime, format with snprintf
-    snprintf(buffer, buffer_size, "TO BE IMPLEMENTED");
+
+    // convert
+    uint32_t ntp_seconds = ntohl(ntp_ts->seconds);
+    uint32_t ntp_fraction = ntohl(ntp_ts->fraction);
+
+    time_t unix_seconds = ntp_seconds - NTP_EPOCH_OFFSET;
+
+    unsigned long microseconds = ((unsigned long long)ntp_fraction * USEC_INCREMENTS) / NTP_FRACTION_SCALE;
+
+    // Convert to struct tm based on local or UTC
+    struct tm *time_info;
+    if (local)
+    {
+        time_info = localtime(&unix_seconds);
+    }
+    else
+    {
+        time_info = gmtime(&unix_seconds);
+    }
+
+    if (time_info == NULL)
+    {
+        snprintf(buffer, buffer_size, "INVALID_TIME");
+        return;
+    }
+
+    snprintf(buffer, buffer_size, "%04d-%02d-%02d %02d:%02d:%02d.%06lu",
+             time_info->tm_year + 1900, // Years since 1900
+             time_info->tm_mon + 1,     // Months are 0-11
+             time_info->tm_mday,        // Day of month
+             time_info->tm_hour,        // Hour
+             time_info->tm_min,         // Minute
+             time_info->tm_sec,         // Second
+             microseconds);             // Microseconds
 }
 
 // STUDENT TODO
@@ -437,7 +470,6 @@ void ntp_time_to_string(const ntp_timestamp_t *ntp_ts, char *buffer, size_t buff
  */
 double ntp_time_to_double(const ntp_timestamp_t *timestamp)
 {
-    printf("ntp_time_to_double() - TO BE IMPLEMENTED\n");
     // TODO: Implement this function
     double seconds;
     double fraction;
@@ -650,6 +682,7 @@ int build_ntp_request(ntp_packet_t *packet)
     }
     memset(packet, 0, sizeof(ntp_packet_t));
 
+    // leap indicator, version, and mode using macro
     SET_NTP_LI_VN_MODE(packet, NTP_LI_UNSYNC, NTP_VERSION, NTP_MODE_CLIENT);
     packet->stratum = 0;
     packet->poll = 6;
@@ -716,7 +749,7 @@ int decode_reference_id(uint8_t stratum, uint32_t ref_id, char *buff, int buff_s
         return RC_OK;
     }
 
-    if (stratum >= 2)
+    if (stratum >= 2) // ip adress
     {
         if (buff_sz < 16)
         {
@@ -733,7 +766,7 @@ int decode_reference_id(uint8_t stratum, uint32_t ref_id, char *buff, int buff_s
         return RC_OK;
     }
 
-    if (buff_sz < 5)
+    if (buff_sz < 5) // ascii
     {
         return RC_BUFF_TOO_SMALL;
     }
@@ -893,17 +926,18 @@ void print_ntp_packet_info(const ntp_packet_t *packet, const char *label, int pa
 
     printf("--- %s Packet ---\n", label);
 
+    // bit fields
     printf("Leap Indicator: %d\n", GET_NTP_LI(packet));
     printf("Version: %d\n", GET_NTP_VN(packet));
     printf("Mode: %d\n", GET_NTP_MODE(packet));
-
+    // basic fields
     printf("Stratum: %d\n", packet->stratum);
     printf("Poll: %d\n", packet->poll);
     printf("Precision: %d\n", packet->precision);
-
+    // reference id
     decode_reference_id(packet->stratum, packet->reference_id, ref_id_buffer, sizeof(ref_id_buffer));
     printf("Reference ID: [0x%08x] %s\n", packet->reference_id, ref_id_buffer);
-
+    // roots
     printf("Root Delay: %u\n", packet->root_delay);
     printf("Root Dispersion: %u\n", packet->root_dispersion);
 
@@ -948,6 +982,7 @@ void print_ntp_results(const ntp_result_t *result)
     // Hint:  Note that you really dont have to do much here other than
     //        Print out data that is passed in teh result arguement
 
+    // timestamp to string
     ntp_time_to_string(&result->server_time, svr_time_buff, TIME_BUFF_SIZE, 1);
     ntp_time_to_string(&result->client_time, cli_time_buff, TIME_BUFF_SIZE, 1);
 
@@ -961,6 +996,7 @@ void print_ntp_results(const ntp_result_t *result)
     printf("Final dispersion: %.6f\n", result->final_dispersion);
     printf("\n");
 
+    // convert to milliseconfs
     double offset_ms = result->offset * 1000.0;
     double dispersion_ms = result->final_dispersion * 1000.0;
 
