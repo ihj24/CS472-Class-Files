@@ -20,16 +20,20 @@ I did not have a massive "a-ha" moment. But the closest was realizing that banwi
 
 ---
 
-## Investigation 2: [Your Second Topic]
+## Investigation 2: NTP Epoch (1900 vs 1970)
 
 ### Implementation Context
-[What you coded and what puzzled you]
+void get_current_ntp_time(ntp_timestamp_t *ntp_ts) and void ntp_time_to_string(const ntp_timestamp_t *ntp_ts, char *buffer, size_t buffer_size, int local) functions
 
 ### Investigation Journey
-[Your research/exploration process]
+1. Why do we have 2 epochs?
+2. Why not switch to 1900 epoch?
+3. What warrants creating a new epoch?
+4. How do servers protect against malicious time requests?
+5. How can failure to convert between epochs effect security?
 
 ### Design Rationale
-[Your synthesis in your own words]
+As we know, there are 2 main different epochs: Unix Epoch (1/1/1970) and NTP Epoch (1/1/1900). The reason we have 2 epochs is because when the first epoch was made, they arbitrarily used 1970 since it was close to when Unix was being made. NTP epoch has a much more interesting reasoning as David Mills wanted to cover the 20th century, the epoch was to be used for scientific and historical data, and was designed to be OS independent. Since the better epoch was made later, there were 15 years worth of electronics already set on unix epoch. It was not viable to have a massive switch because the epoch system does not have dates stored as dates, but milliseconds, which means the time conversions would break if they tried to switch. What warrants making a new epoch are new technology domains, incompatible requirements, and if it a self contained system. Time is shockingly important when it comes to security. Security protocols consult multiple independent clocks and reject outliers, and limit how fast or how far the system clock can change. Jumps in time are avoided by slewing time gradually, while security sensitive logic uses monotonic clocks that cannot go backward. If epoch conversion is off, timestamps can be interpreted as far off into time. This can cause expired credentials, tokens, or certificates to seem valid.
 
 ### Implementation Insight
-[What you learned from implementing]
+I wonder if the habit of stacking systems with eventually come to backfire. It seems like having so many different systems in place can get confusing and convoluted. I was genuinely surprised how important time is to security. 
