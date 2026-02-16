@@ -1,0 +1,14 @@
+1.
+TCP is used for encrypted communication because its makes a stateful, reliable, and ordered connection that continues the ecryption session throught out the entire communication. The way TCP connection works is that the keys are exchanged at the start, they are then valid until the end of the communication. UDP on the otherhand can not achieve this as the connection/session does not exist. TCP being stateful allows for this system by keeping a connection that serves as a contaitne for the encryption session, which eliminates repeated key exchanges and complex tracking.
+
+2.
+It uses a fixed header isntead of a text based one because encrypted data is already and contains any byte value that may break text based parsing. The msg_type field tells the receiver what data follows. payload_len specifies how many bytes to read. Doing "ENCRYPT:Hello World" has delimiter issues. The 4 byte header allows direct memory access for instant parsing. The reciever will always know how to read the 4 bytes.
+
+3.
+The payload_len field is importatnt because TCP is stream-oriented and sends a continous stream of bytes where one send() doesnt equal one recv(). This means multiple PDU sent quickly can arrive concatenated in a single recv() call. Without this field, we have no way to detemnine where a PDU ends and begins. The field solves this by saying how many bytes belong to a current payload.
+
+4.
+The key exchange creates fresh keys by TCP connection rather than using pre shared keys since hardcoding is easy to compromise. This design provides automatic key rotation, client isolation, and uses TCP connection length as session boundaries. When service_cleinte_loop() returns the keys are destroyed. This relys on TCPS staetful connection so we know when the keys can be made and dsicarder.
+
+5.
+The direction field gives importatn critical protocol validation by letting immediate detection of errors. DIR_RESPONSE and DIR_REQUEST let  the server and client know that something is wrong. This makes self documentation and tools like wireshark can label them accordingly. The field provides fast error detection.
