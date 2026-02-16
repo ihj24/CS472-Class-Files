@@ -2,7 +2,7 @@
 
 # Compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra -gdwarf-4 -O0  -g
+CFLAGS = -Wall -Wextra -gdwarf-4 -O0  -g -include macos-compat.h
 TARGET = crypto-echo
 SOURCE = crypto-echo.c crypto-lib.c crypto-client.c crypto-server.c
 
