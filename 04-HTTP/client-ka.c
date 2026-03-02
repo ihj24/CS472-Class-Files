@@ -108,15 +108,14 @@ int submit_request(int sock, const char *host, uint16_t port, char *resource)
     // remember the first receive we just did has the HTTP header, and likely some body
     // data.  We need to determine how much data we expect
 
-    int header_len = 0; // change this to get the header len as per the directions above
-    header_len = get_http_header_len(recv_buff, bytes_recvd);
-    if (header_len < 0)
+    int header_len = 0;
+    int content_len = 0;
+    process_http_header(recv_buff, bytes_recvd, &header_len, &content_len);
+    if (header_len <= 0)
     {
         close(sock);
         return -1;
     }
-
-    int content_len = get_http_content_len(recv_buff, bytes_recvd);
 
     //--------------------------------------------------------------------------------
     // TODO:  Make sure you understand the calculations below
@@ -142,7 +141,6 @@ int submit_request(int sock, const char *host, uint16_t port, char *resource)
             close(sock);
             return -1;
         }
-        bytes_recvd = 0; // replace with a valid recv(...); call
 
         // You can uncomment out the fprintf() calls below to see what is going on
 
