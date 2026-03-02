@@ -1,0 +1,16 @@
+make run-cc3 (./client-cc httpbin.org 80 /delay/2 /delay/2 /delay/2)
+t1 = 6.639 seconds
+t2 = 6.242 seconds
+t3 = 6.809 seconds
+avg = 6.5363 seconds
+-------------------------------------------------------------------------------------------------------------
+make run-ka3 (./client-ka httpbin.org 80 /delay/2 /delay/2 /delay/2)
+t1 = 6.209 seconds
+t2 = 6.217 seconds
+t3 = 6.259 seconds
+avg = 6.2283 seconds
+-------------------------------------------------------------------------------------------------------------
+Keep Alive showed an increased response time by about .308 seconds. The reason for the performance difference 
+is that client-cc closes the connection with each request, meaning that this requires 3 full handshakes for 
+each test. On the otherhand, Keep Alive only has to make one handshake per test. /delay/2 helps demonstrate 
+this by forcing the server to wait 2 seconds before responding to help display the difference with bigger numbers.
