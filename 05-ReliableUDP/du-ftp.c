@@ -8,9 +8,6 @@
 #include "du-ftp.h"
 #include "du-proto.h"
 
-#define BUFF_SZ 512
-static char sbuffer[BUFF_SZ];
-static char rbuffer[BUFF_SZ];
 static char full_file_path[FNAME_SZ];
 
 /*
@@ -110,40 +107,240 @@ int server_loop(dp_connp dpc, void *sBuff, void *rBuff, int sbuff_sz, int rbuff_
     }
 }
 
-void start_client(dp_connp dpc)
+void start_client(dp_connp dpc, const char *file_name)
 {
-    static char sBuff[4096];
+    // Step 1 — send REQUEST PDU with filename
+    ftp_pdu req;
+    req.status = FTP_ST_REQUEST;
+    req.err_code = FTP_ERR_NONE;
+    req.payload_sz = 0;
+    memset(req.file_name, 0, FNAME_SZ);
+    strncpy(req.file_name, file_name, FNAME_SZ - 1);
 
-    if (!dpc->isConnected)
+    printf("sending PDU, status=%d size=%lu\n", req.status, sizeof(ftp_pdu));
+
+    int rc = dpsend(dpc, &req, sizeof(ftp_pdu));
+    if (rc < 0)
     {
-        printf("Client not connected\n");
-        return;
+        printf("[CLIENT] ERROR: failed to send request\n");
+        exit(-1);
     }
+    printf("[CLIENT] Sent REQUEST for file: %s\n", file_name);
 
-    FILE *f = fopen(full_file_path, "rb");
+    // Step 2 — wait for server response
+    ftp_pdu resp;
+    rc = dprecv(dpc, &resp, sizeof(ftp_pdu));
+    if (rc < 0)
+    {
+        printf("[CLIENT] ERROR: failed to receive server response\n");
+        exit(-1);
+    }
+    if (resp.status == FTP_ST_ERROR)
+    {
+        printf("[CLIENT] Server returned error code %d — aborting\n", resp.err_code);
+        exit(-1);
+    }
+    if (resp.status != FTP_ST_READY)
+    {
+        printf("[CLIENT] Unexpected server status %d — aborting\n", resp.status);
+        exit(-1);
+    }
+    printf("[CLIENT] Server READY — starting transfer\n");
+
+    // Step 3 — open file and send data blocks
+    static char data_buf[4096];
+    static char send_buf[sizeof(ftp_pdu) + 4096];
+    char full_path[FNAME_SZ + 16];
+    snprintf(full_path, sizeof(full_path), "./outfile/%s", file_name);
+
+    FILE *f = fopen(full_path, "rb");
     if (f == NULL)
     {
-        printf("ERROR:  Cannot open file %s\n", full_file_path);
+        printf("[CLIENT] ERROR: cannot open %s\n", full_path);
         exit(-1);
     }
-    if (dpc->isConnected == false)
+
+    int bytes_read;
+    while ((bytes_read = fread(data_buf, 1, sizeof(data_buf), f)) > 0)
     {
-        perror("Expecting the protocol to be in connect state, but its not");
+        int is_last = feof(f);
+
+        ftp_pdu *blk = (ftp_pdu *)send_buf;
+        blk->status = is_last ? FTP_ST_COMPLETE : FTP_ST_IN_PROGRESS;
+        blk->err_code = FTP_ERR_NONE;
+        blk->payload_sz = bytes_read;
+        memset(blk->file_name, 0, FNAME_SZ);
+
+        memcpy(send_buf + sizeof(ftp_pdu), data_buf, bytes_read);
+
+        rc = dpsend(dpc, send_buf, sizeof(ftp_pdu) + bytes_read);
+        if (rc < 0)
+        {
+            printf("[CLIENT] ERROR: failed to send data block\n");
+            fclose(f);
+            exit(-1);
+        }
+        printf("[CLIENT] Sent block: %d bytes\n", bytes_read);
+    }
+    fclose(f);
+
+    // Step 4 — graceful close
+    ftp_pdu close_pdu;
+    close_pdu.status = FTP_ST_CLOSE;
+    close_pdu.err_code = FTP_ERR_NONE;
+    close_pdu.payload_sz = 0;
+    memset(close_pdu.file_name, 0, FNAME_SZ);
+
+    rc = dpsend(dpc, &close_pdu, sizeof(ftp_pdu));
+    if (rc < 0)
+    {
+        printf("[CLIENT] ERROR: failed to send close\n");
         exit(-1);
     }
+    printf("[CLIENT] Sent CLOSE\n");
 
-    int bytes = 0;
+    // wait for CLOSE_ACK
+    ftp_pdu ack;
+    rc = dprecv(dpc, &ack, sizeof(ftp_pdu));
+    if (rc < 0)
+    {
+        printf("[CLIENT] ERROR: failed to receive close ack\n");
+        exit(-1);
+    }
+    if (ack.status == FTP_ST_CLOSE_ACK)
+        printf("[CLIENT] Received CLOSE_ACK — transfer complete\n");
+    else
+        printf("[CLIENT] WARNING: expected CLOSE_ACK, got status %d\n", ack.status);
 
-    while ((bytes = fread(sBuff, 1, sizeof(sBuff), f)) > 0)
-        dpsend(dpc, sBuff, bytes);
-
-    fclose(f);
     dpdisconnect(dpc);
 }
 
 void start_server(dp_connp dpc)
 {
-    server_loop(dpc, sbuffer, rbuffer, sizeof(sbuffer), sizeof(rbuffer));
+    // Step 1 — receive REQUEST PDU and extract filename
+    ftp_pdu req;
+    int rc = dprecv(dpc, &req, sizeof(ftp_pdu));
+    if (rc < 0)
+    {
+        printf("[SERVER] ERROR: failed to receive request\n");
+        return;
+    }
+    if (req.status != FTP_ST_REQUEST)
+    {
+        printf("[SERVER] ERROR: expected REQUEST, got status %d\n", req.status);
+        return;
+    }
+    req.file_name[FNAME_SZ - 1] = '\0';
+    printf("[SERVER] Client requests file: %s\n", req.file_name);
+
+    // Step 2 — try to open file for writing, send READY or ERROR
+    char full_path[FNAME_SZ + 16];
+    snprintf(full_path, sizeof(full_path), "./infile/%s", req.file_name);
+
+    FILE *f = fopen(full_path, "wb");
+    if (f == NULL)
+    {
+        printf("[SERVER] ERROR: cannot open %s for writing\n", full_path);
+        ftp_pdu err_pdu;
+        err_pdu.status = FTP_ST_ERROR;
+        err_pdu.err_code = FTP_ERR_DISK;
+        err_pdu.payload_sz = 0;
+        memset(err_pdu.file_name, 0, FNAME_SZ);
+        rc = dpsend(dpc, &err_pdu, sizeof(ftp_pdu));
+        if (rc < 0)
+            printf("[SERVER] ERROR: failed to send error PDU\n");
+        return;
+    }
+
+    // send READY
+    ftp_pdu ready_pdu;
+    ready_pdu.status = FTP_ST_READY;
+    ready_pdu.err_code = FTP_ERR_NONE;
+    ready_pdu.payload_sz = 0;
+    memset(ready_pdu.file_name, 0, FNAME_SZ);
+    strncpy(ready_pdu.file_name, req.file_name, FNAME_SZ - 1);
+
+    rc = dpsend(dpc, &ready_pdu, sizeof(ftp_pdu));
+    if (rc < 0)
+    {
+        printf("[SERVER] ERROR: failed to send READY\n");
+        fclose(f);
+        return;
+    }
+    printf("[SERVER] Sent READY — waiting for data\n");
+
+    // Step 3 — receive data blocks and write to file
+    static char recv_buf[sizeof(ftp_pdu) + 4096];
+    long total_bytes = 0;
+
+    while (1)
+    {
+        rc = dprecv(dpc, recv_buf, sizeof(recv_buf));
+        printf("[SERVER] dprecv returned %d bytes, first 4 bytes: %d\n",
+               rc, *(int *)recv_buf);
+        if (rc == DP_CONNECTION_CLOSED)
+        {
+            printf("[SERVER] ERROR: connection closed unexpectedly\n");
+            fclose(f);
+            return;
+        }
+        if (rc < (int)sizeof(ftp_pdu))
+        {
+            printf("[SERVER] ERROR: received truncated PDU\n");
+            fclose(f);
+            return;
+        }
+
+        ftp_pdu *blk = (ftp_pdu *)recv_buf;
+
+        // Step 4 — handle CLOSE
+        if (blk->status == FTP_ST_CLOSE)
+        {
+            printf("[SERVER] Received CLOSE\n");
+            fclose(f);
+
+            // send CLOSE_ACK
+            ftp_pdu close_ack;
+            close_ack.status = FTP_ST_CLOSE_ACK;
+            close_ack.err_code = FTP_ERR_NONE;
+            close_ack.payload_sz = 0;
+            memset(close_ack.file_name, 0, FNAME_SZ);
+
+            rc = dpsend(dpc, &close_ack, sizeof(ftp_pdu));
+            if (rc < 0)
+                printf("[SERVER] ERROR: failed to send CLOSE_ACK\n");
+            else
+                printf("[SERVER] Sent CLOSE_ACK — total bytes written: %ld\n",
+                       total_bytes);
+
+            return;
+        }
+
+        // handle IN_PROGRESS and COMPLETE
+        if (blk->status == FTP_ST_IN_PROGRESS || blk->status == FTP_ST_COMPLETE)
+        {
+            char *payload = recv_buf + sizeof(ftp_pdu);
+            int written = fwrite(payload, 1, blk->payload_sz, f);
+            if (written != blk->payload_sz)
+            {
+                printf("[SERVER] ERROR: disk write failed\n");
+                fclose(f);
+                return;
+            }
+            total_bytes += written;
+            printf("[SERVER] Received block: %d bytes (total: %ld)\n",
+                   blk->payload_sz, total_bytes);
+
+            if (blk->status == FTP_ST_COMPLETE)
+                printf("[SERVER] All data received — waiting for CLOSE\n");
+        }
+        else
+        {
+            printf("[SERVER] ERROR: unexpected status %d\n", blk->status);
+            fclose(f);
+            return;
+        }
+    }
 }
 
 int main(int argc, char *argv[])
@@ -160,6 +357,7 @@ int main(int argc, char *argv[])
     printf("MODE %d\n", cfg.prog_mode);
     printf("PORT %d\n", cfg.port_number);
     printf("FILE NAME: %s\n", cfg.file_name);
+    printf("sizeof ftp_pdu = %lu\n", sizeof(ftp_pdu));
 
     switch (cmd)
     {
@@ -174,7 +372,7 @@ int main(int argc, char *argv[])
             exit(-1);
         }
 
-        start_client(dpc);
+        start_client(dpc, cfg.file_name);
         exit(0);
         break;
 

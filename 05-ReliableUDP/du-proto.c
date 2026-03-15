@@ -129,17 +129,50 @@ dp_connp dpClientInit(char *addr, int port)
 int dprecv(dp_connp dp, void *buff, int buff_sz)
 {
 
-    dp_pdu *inPdu;
-    int rcvLen = dprecvdgram(dp, _dpBuffer, sizeof(_dpBuffer));
+    if (buff == NULL || buff_sz <= 0)
+        return DP_ERROR_GENERAL;
 
-    if (rcvLen == DP_CONNECTION_CLOSED)
-        return DP_CONNECTION_CLOSED;
+    int total_received = 0;
+    char *dst = (char *)buff;
 
-    inPdu = (dp_pdu *)_dpBuffer;
-    if (rcvLen > sizeof(dp_pdu))
-        memcpy(buff, (_dpBuffer + sizeof(dp_pdu)), inPdu->dgram_sz);
+    while (1)
+    {
+        int rcvLen = dprecvdgram(dp, _dpBuffer, sizeof(_dpBuffer));
 
-    return inPdu->dgram_sz;
+        if (rcvLen == DP_CONNECTION_CLOSED)
+            return DP_CONNECTION_CLOSED;
+
+        if (rcvLen < 0)
+            return rcvLen;
+
+        dp_pdu *inPdu = (dp_pdu *)_dpBuffer;
+        int payload_sz = inPdu->dgram_sz;
+
+        if (payload_sz < 0)
+        {
+            printf("dprecv: corrupt PDU header reports negative payload size %d\n",
+                   payload_sz);
+            return DP_ERROR_BAD_DGRAM;
+        }
+
+        if (total_received + payload_sz > buff_sz)
+        {
+            printf("dprecv: reassembly buffer too small "
+                   "(%d needed, %d available)\n",
+                   total_received + payload_sz, buff_sz);
+            return DP_BUFF_UNDERSIZED;
+        }
+
+        if (payload_sz > 0)
+            memcpy(dst + total_received, _dpBuffer + sizeof(dp_pdu), payload_sz);
+
+        total_received += payload_sz;
+
+        if (!(inPdu->mtype & DP_MT_FRAGMENT))
+            break;
+    }
+
+    return total_received;
 }
 
 static int dprecvdgram(dp_connp dp, void *buff, int buff_sz)
