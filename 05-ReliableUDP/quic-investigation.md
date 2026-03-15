@@ -30,7 +30,7 @@ Then reflect on du-proto, which supports a single send/receive channel between a
 
 **1a.** If you wanted to transfer two files simultaneously using du-proto, what would break or become complicated?
 
-_Your answer here._
+du-proto doesn't have a concept of multiple streams or channels as there is a single send/receive path between client and server. If you tried to transfer two files simultaneously, the two transfers would interfere with each other because both would be calling dpsend and dprecv on the same socket. A fragment from file a file could arrive when the receiver is expecting a fragment from another file, causing the wrong data to be written to the wrong file without a way to tell them apart. If you tried to bypass this by using two separate connections on different ports, du-proto doesn't have a multiplexing mechanism in the PDU. There is no stream ID or channel identifier in dp_pdu as the struct only carries proto_ver, mtype, seqnum, dgram_sz, and err_num. Without a way to mark each datagram with which transfer it belongs to, the receiver can't to route incoming data to the correct file.
 
 **1b.** Head-of-line blocking is a well-known limitation of TCP. Does du-proto suffer from the same issue, a different issue, or is the concept not applicable given du-proto's design? Explain your reasoning with reference to how `dpsend()` and `dprecv()` are structured.
 
